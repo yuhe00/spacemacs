@@ -19,17 +19,30 @@
         web-mode
         ))
 
+(defmacro typescript||iterate-modes (&rest body)
+  `(progn
+     ,@(loop for mode in (if typescript-use-web-mode-for-ts '(web-typescript-mode) '(typescript-mode web-typescript-mode))
+             collect (let ((hook (intern (format "%S-hook" mode)))
+                           (jump-handlers (intern (concat "spacemacs-jump-handlers-" (symbol-name mode)))))
+                       `(progn
+                          ,@(subst mode 'mode (subst hook 'hook (subst jump-handlers 'jump-handlers body))))))))
+
 (defun typescript/post-init-company ()
   (when (configuration-layer/package-usedp 'tide)
-    (spacemacs|add-company-backends
-      :backends company-tide
-      :modes typescript-mode)))
+    (typescript||iterate-modes
+     (spacemacs|add-company-backends
+       :backends company-tide
+       :modes mode))))
 
 (defun typescript/post-init-eldoc ()
-  (add-hook 'typescript-mode-hook 'eldoc-mode))
+  (typescript||iterate-modes
+   (add-hook 'hook 'eldoc-mode)))
 
 (defun typescript/post-init-flycheck ()
-  (spacemacs/add-flycheck-hook 'typescript-mode))
+  (typescript||iterate-modes
+   (flycheck-add-mode 'typescript-tide 'mode)
+   (flycheck-add-mode 'typescript-tslint 'mode)
+   (spacemacs/add-flycheck-hook 'mode)))
 
 (defun typescript/init-tide ()
   (use-package tide
@@ -40,50 +53,52 @@
       (evilified-state-evilify tide-references-mode tide-references-mode-map
         (kbd "C-k") 'tide-find-previous-reference
         (kbd "C-j") 'tide-find-next-reference
-        (kbd "C-l") 'tide-goto-reference)
-      (add-hook 'typescript-mode-hook 'tide-setup)
-      (add-to-list 'spacemacs-jump-handlers-typescript-mode 'tide-jump-to-definition))
+        (kbd "C-l") 'tide-goto-reference))
     :config
     (progn
-      (spacemacs/declare-prefix-for-mode 'typescript-mode "mg" "goto")
-      (spacemacs/declare-prefix-for-mode 'typescript-mode "mh" "help")
-      (spacemacs/declare-prefix-for-mode 'typescript-mode "mn" "name")
-      (spacemacs/declare-prefix-for-mode 'typescript-mode "mr" "rename")
-      (spacemacs/declare-prefix-for-mode 'typescript-mode "mS" "server")
-      (spacemacs/declare-prefix-for-mode 'typescript-mode "ms" "send")
-
       (defun typescript/jump-to-type-def()
         (interactive)
         (tide-jump-to-definition t))
 
-      (spacemacs/set-leader-keys-for-major-mode 'typescript-mode
-        "gb" 'tide-jump-back
-        "gt" 'typescript/jump-to-type-def
-        "gu" 'tide-references
-        "hh" 'tide-documentation-at-point
-        "rr" 'tide-rename-symbol
-        "Sr" 'tide-restart-server))))
+      (typescript||iterate-modes
+       (spacemacs/declare-prefix-for-mode 'mode "mg" "goto")
+       (spacemacs/declare-prefix-for-mode 'mode "mh" "help")
+       (spacemacs/declare-prefix-for-mode 'mode "mn" "name")
+       (spacemacs/declare-prefix-for-mode 'mode "mr" "rename")
+       (spacemacs/declare-prefix-for-mode 'mode "mS" "server")
+       (spacemacs/declare-prefix-for-mode 'mode "ms" "send")
+
+       (spacemacs/set-leader-keys-for-major-mode 'mode
+         "gb" 'tide-jump-back
+         "gt" 'typescript/jump-to-type-def
+         "gu" 'tide-references
+         "hh" 'tide-documentation-at-point
+         "rr" 'tide-rename-symbol
+         "Sr" 'tide-restart-server)
+
+       (add-hook 'hook 'tide-setup)))))
+
+(defun typescript/post-init-tide ()
+  (setf (flycheck-checker-get 'typescript-tide 'modes) '(typescript-mode web-typescript-mode))
+  (typescript||iterate-modes
+   (spacemacs|define-jump-handlers mode)
+   (add-to-list 'jump-handlers 'tide-jump-to-definition)))
+
+;; we need to (re)use the init-web-mode here as our mode needs to be defined before the misc post-init functions
+(defun typescript/init-web-mode ()
+  (define-derived-mode web-typescript-mode web-mode "web-typescript")
+  (typescript||iterate-modes
+   (when typescript-fmt-on-save
+     (add-hook 'hook 'typescript/fmt-before-save-hook))
+   (spacemacs/set-leader-keys-for-major-mode 'mode
+     "="  'typescript/format
+     "sp" 'typescript/open-region-in-playground)))
 
 (defun typescript/post-init-web-mode ()
-  (add-to-list 'auto-mode-alist '("\\.tsx\\'" . web-mode))
-  ;; FIXME -- this is not good!
-  (add-hook 'web-mode-hook
-            (lambda ()
-              (when (and (buffer-file-name)
-                         (string-equal "tsx" (file-name-extension (buffer-file-name))))
-                (tide-setup)
-                (flycheck-mode +1)
-                (eldoc-mode +1)
-                (when (configuration-layer/package-usedp 'company)
-                  (company-mode-on))))))
+  (when typescript-use-web-mode-for-ts
+    (add-to-list 'auto-mode-alist '("\\.ts\\'" . web-typescript-mode)))
+  (add-to-list 'auto-mode-alist '("\\.tsx\\'" . web-typescript-mode)))
 
 (defun typescript/init-typescript-mode ()
   (use-package typescript-mode
-    :defer t
-    :config
-    (progn
-      (when typescript-fmt-on-save
-        (add-hook 'typescript-mode-hook 'typescript/fmt-before-save-hook))
-      (spacemacs/set-leader-keys-for-major-mode 'typescript-mode
-        "="  'typescript/format
-        "sp" 'typescript/open-region-in-playground))))
+    :defer t))
